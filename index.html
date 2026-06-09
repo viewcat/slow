@@ -229,8 +229,6 @@
                 const rows = Math.ceil(h / blockSize);
 
                 for (let i = 0; i < total - 1; i++) {
-					statusDiv.innerText = `(${i+1}/${total}) Interpolating with Vector Blending...`;
-					
                     const frameA = videoFrames[i];
                     const frameB = videoFrames[i + 1];
                     
@@ -329,6 +327,7 @@
                     let interpolationPct = (i / (total - 2)) * 100;
                     let totalPct = 30 + (interpolationPct * 0.7);
                     progressBar.style.width = totalPct + '%';
+					statusDiv.innerText = `(${i+1}/${total}) Interpolating with Vector Blending...`;
                     
                     // Pass thread execution back to window context immediately to avoid tab crashes
                     await new Promise(r => setTimeout(r, 0));
