@@ -176,10 +176,7 @@
                 canvas.width = bgVideo.videoWidth;
                 canvas.height = bgVideo.videoHeight;
 
-                statusDiv.innerText = "Extracting raw source frames...";
                 await extractFrames();
-
-                statusDiv.innerText = "Interpolating with Vector Blending...";
                 await interpolateTimeline();
 
                 //statusDiv.innerText = "Playing back at controlled 30 FPS Slow-Mo...";
@@ -206,6 +203,7 @@
 
                         let pct = Math.min(100, (bgVideo.currentTime / bgVideo.duration) * 100);
                         progressBar.style.width = (pct * 0.3) + '%'; // Reserve first 30% of bar for extraction
+						statusDiv.innerText = `(${bgVideo.currentTime}/${bgVideo.duration}) Extracting raw source frames...`;
 
                         if (bgVideo.currentTime + frameInterval < bgVideo.duration) {
                             bgVideo.currentTime += frameInterval;
