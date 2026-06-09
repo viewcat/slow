@@ -203,7 +203,7 @@
 
                         let pct = Math.min(100, (bgVideo.currentTime / bgVideo.duration) * 100);
                         progressBar.style.width = (pct * 0.3) + '%'; // Reserve first 30% of bar for extraction
-						statusDiv.innerText = `(${bgVideo.currentTime}/${bgVideo.duration}) Extracting raw source frames...`;
+						statusDiv.innerText = `(${bgVideo.currentTime.toFixed(2)}/${bgVideo.duration.toFixed(2)}) Extracting raw source frames...`;
 
                         if (bgVideo.currentTime + frameInterval < bgVideo.duration) {
                             bgVideo.currentTime += frameInterval;
