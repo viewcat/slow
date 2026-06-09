@@ -229,6 +229,8 @@
                 const rows = Math.ceil(h / blockSize);
 
                 for (let i = 0; i < total - 1; i++) {
+					statusDiv.innerText = `(${i+1}/${total}) Interpolating with Vector Blending...`;
+					
                     const frameA = videoFrames[i];
                     const frameB = videoFrames[i + 1];
                     
