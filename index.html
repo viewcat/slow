@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	    <link rel="icon" type="image/jpeg" href="favicon.jpeg">
+        <style>
+            /* Fill the entire browser window and eliminate scrollbars */
+            html, body { 
+                margin: 0; 
+                padding: 0; 
+                width: 100vw; 
+                height: 100vh; 
+                background: #000; 
+                color: #fff; 
+                font-family: -apple-system, sans-serif; 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                overflow: hidden; 
+            }
+
+            /* Initial Setup Setup Layout Wrapper */
+            .container { 
+                width: 100%; 
+                max-width: 400px; 
+                background: rgba(255, 255, 255, 0.05); 
+                padding: 30px; 
+                border-radius: 16px; 
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                text-align: center;
+                z-index: 10;
+                transition: opacity 0.5s ease;
+            }
+            
+            video { display: none; } 
+
+            /* Canvas occupies 100% of the viewport width and height natively */
+            canvas { 
+                position: absolute; 
+                top: 0; 
+                left: 0; 
+                width: 100vw; 
+                height: 100vh; 
+                object-fit: contain; /* Preserves your exact aspect ratio without cropping edges */
+                background: #000; 
+                display: none; /* Hidden until playback begins */
+            }
+
+            .controls { margin: 20px 0; display: flex; flex-direction: column; gap: 12px; }
+            input[type="file"] { color: #aaa; font-size: 14px; }
+            
+            button { 
+                background: #007bff; 
+                border: none; 
+                color: white; 
+                padding: 14px; 
+                border-radius: 8px; 
+                cursor: pointer; 
+                font-weight: bold; 
+                font-size: 15px;
+                width: 100%; 
+                box-shadow: 0 4px 10px rgba(0,123,255,0.3);
+            }
+            button:disabled { background: #444; color: #888; cursor: not-allowed; box-shadow: none; }
+
+            .control-group {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 5px;
+            }
+
+            .control-group label {
+                color: #ffffff;
+                font-size: 1rem;
+                font-weight: 500;
+            }
+
+            #fps-input, #pfps-input {
+                background: #222222;
+                color: #ffffff;
+                border: 1px solid #444444;
+                padding: 8px 12px;
+                border-radius: 12px;
+                font-size: 1rem;
+                width: 70px;
+                text-align: center;
+            }
+
+            #fps-input:focus, #pfps-input:focus {
+                outline: none;
+                border-color: #00ffcc;
+            }
+
+            #progressBarContainer { width: 100%; background: #222; border-radius: 6px; margin-top: 15px; overflow: hidden; }
+            #progressBar { width: 0%; height: 8px; background: #28a745; transition: width 0.1s ease; }
+            #status { font-weight: bold; margin-top: 15px; color: #ccc; font-size: 14px; }
+        </style>
+    </head>
+    <body>
+        
+        <div class="container" id="setupPanel">
+            <h2>Slow-Mo Injection</h2>
+            <p style="font-size: 13px; color: #aaa;">Bilinear Blending & Vector Smoothing (Any resolution)</p>
+
+            <div class="control-group">
+                <label for="fps-input">Video FPS:</label>
+                <input type="number" id="fps-input" min="30" max="120" step="30" value="60">
+            </div>
+
+            <div class="control-group">
+                <label for="pfps-input">Playback FPS:</label>
+                <input type="number" id="pfps-input" min="15" max="120" step="15" value="30">
+            </div>
+
+            <div class="controls">
+                <input type="file" id="fileInput" accept="video/*">
+                <button id="processBtn" disabled>Process & Play Video</button>
+            </div>
+
+            <div id="progressBarContainer">
+                <div id="progressBar"></div>
+            </div>
+            <div id="status">Upload a video to begin</div>
+        </div>
+
+        <!-- Immersive Fullscreen Viewport Canvas Target -->
+        <canvas id="outputCanvas"></canvas>
+        <video id="bgVideo" preload="auto" playsinline muted crossOrigin="anonymous"></video>
+
+        <script>
+            const randStr = () => Math.random().toString(36).substring(2).toUpperCase();
+	        document.title = `${randStr()}${randStr()}${randStr()}`;
+
+            const fileInput = document.getElementById('fileInput');
+            const processBtn = document.getElementById('processBtn');
+            const bgVideo = document.getElementById('bgVideo');
+            const canvas = document.getElementById('outputCanvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            const progressBarContainer = document.getElementById('progressBarContainer');
+            const progressBar = document.getElementById('progressBar');
+            const statusDiv = document.getElementById('status');
+            const setupPanel = document.getElementById('setupPanel');
+            const fpsInput = document.getElementById('fps-input');
+            const pfpsInput = document.getElementById('pfps-input');
+
+            let videoFrames = []; 
+            let cachedTimeline = []; 
+
+            // Step 1: Safely catch file change
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    processBtn.disabled = true; // Keep disabled until metadata event clears it
+                    statusDiv.innerText = "Loading video file into memory...";
+                    bgVideo.src = URL.createObjectURL(file);
+                }
+            });
+
+            // FIX: Wait for the browser to parse structural dimensions before enabling button clicks
+            bgVideo.addEventListener('loadedmetadata', () => {
+                processBtn.disabled = false;
+                statusDiv.innerText = `Video loaded (${bgVideo.videoWidth}x${bgVideo.videoHeight}). Ready to process.`;
+            });
+
+            // Step 2: Processing Sequences
+            processBtn.addEventListener('click', async () => {
+                processBtn.disabled = true;
+                fileInput.disabled = true;
+                progressBarContainer.style.display = 'block';
+                videoFrames = [];
+                cachedTimeline = [];
+
+                // Force rigid 1080x1920 portrait layout bounds
+                canvas.width = bgVideo.videoWidth;
+                canvas.height = bgVideo.videoHeight;
+
+                statusDiv.innerText = "Extracting raw source frames...";
+                await extractFrames();
+
+                statusDiv.innerText = "Interpolating with Vector Blending...";
+                await interpolateTimeline();
+
+                //statusDiv.innerText = "Playing back at controlled 30 FPS Slow-Mo...";
+                //progressBarContainer.style.display = 'none';
+                //playSlowMoTimeline();
+
+                // Fade out setup controls and transition gracefully into full screen playback
+                setupPanel.style.opacity = '0';
+                setTimeout(() => {
+                    setupPanel.style.display = 'none';
+                    canvas.style.display = 'block'; // Make fullscreen viewport visible
+                    playSlowMoTimeline();
+                }, 500);
+            });
+
+            async function extractFrames() {
+                return new Promise((resolve) => {
+                    bgVideo.currentTime = 0;
+                    const frameInterval = 1 / (parseFloat(fpsInput.value) || 60); 
+                    
+                    bgVideo.addEventListener('seeked', function onSeeked() {
+                        ctx.drawImage(bgVideo, 0, 0, canvas.width, canvas.height);
+                        videoFrames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+
+                        let pct = Math.min(100, (bgVideo.currentTime / bgVideo.duration) * 100);
+                        progressBar.style.width = (pct * 0.3) + '%'; // Reserve first 30% of bar for extraction
+
+                        if (bgVideo.currentTime + frameInterval < bgVideo.duration) {
+                            bgVideo.currentTime += frameInterval;
+                        } else {
+                            bgVideo.removeEventListener('seeked', onSeeked);
+                            resolve();
+                        }
+                    });
+                    bgVideo.currentTime = 0.001; 
+                });
+            }
+
+            async function interpolateTimeline() {
+                const total = videoFrames.length;
+                const w = canvas.width;
+                const h = canvas.height;
+                
+                const blockSize = 16; 
+                const searchRadius = 10; 
+                const cols = Math.ceil(w / blockSize);
+                const rows = Math.ceil(h / blockSize);
+
+                for (let i = 0; i < total - 1; i++) {
+                    const frameA = videoFrames[i];
+                    const frameB = videoFrames[i + 1];
+                    
+                    cachedTimeline.push(frameA);
+
+                    let synthFrame = ctx.createImageData(w, h);
+                    
+                    let motionX = new Float32Array(cols * rows);
+                    let motionY = new Float32Array(cols * rows);
+
+                    // Compute localized block vectors
+                    for (let r = 0; r < rows; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            const x = c * blockSize;
+                            const y = r * blockSize;
+                            
+                            let bestDx = 0, bestDy = 0, minError = Infinity;
+                            let cx = Math.min(w - 1, x + (blockSize >> 1));
+                            let cy = Math.min(h - 1, y + (blockSize >> 1));
+                            let idxA = (cy * w + cx) * 4;
+
+                            for (let dy = -searchRadius; dy <= searchRadius; dy += 2) {
+                                for (let dx = -searchRadius; dx <= searchRadius; dx += 2) {
+                                    let nx = cx + dx;
+                                    let ny = cy + dy;
+
+                                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                        let idxB = (ny * w + nx) * 4;
+                                        let diff = Math.abs(frameA.data[idxA] - frameB.data[idxB]) +
+                                                Math.abs(frameA.data[idxA+1] - frameB.data[idxB+1]) +
+                                                Math.abs(frameA.data[idxA+2] - frameB.data[idxB+2]);
+                                        
+                                        if (diff < minError) {
+                                            minError = diff;
+                                            bestDx = dx;
+                                            bestDy = dy;
+                                        }
+                                    }
+                                }
+                            }
+                            motionX[r * cols + c] = bestDx;
+                            motionY[r * cols + c] = bestDy;
+                        }
+                    }
+
+                    // Render pixel channels with vector averaging
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            let blockC = Math.floor(x / blockSize);
+                            let blockR = Math.floor(y / blockSize);
+                            
+                            let vecIdx = blockR * cols + blockC;
+                            let dx = motionX[vecIdx];
+                            let dy = motionY[vecIdx];
+
+                            // Smooth erratic motion jumps using spatial neighborhood filtering
+                            if (blockC > 0 && blockC < cols - 1 && blockR > 0 && blockR < rows - 1) {
+                                let sumX = 0, sumY = 0;
+                                for (let ky = -1; ky <= 1; ky++) {
+                                    for (let kx = -1; kx <= 1; kx++) {
+                                        let kIdx = (blockR + ky) * cols + (blockC + kx);
+                                        sumX += motionX[kIdx];
+                                        sumY += motionY[kIdx];
+                                    }
+                                }
+                                dx = sumX / 9;
+                                dy = sumY / 9;
+                            }
+
+                            // Midpoint tracking shifts
+                            let srcXA = Math.round(x - dx * 0.5);
+                            let srcYA = Math.round(y - dy * 0.5);
+                            let srcXB = Math.round(x + dx * 0.5);
+                            let srcYB = Math.round(y + dy * 0.5);
+
+                            srcXA = Math.max(0, Math.min(w - 1, srcXA));
+                            srcYA = Math.max(0, Math.min(h - 1, srcYA));
+                            srcXB = Math.max(0, Math.min(w - 1, srcXB));
+                            srcYB = Math.max(0, Math.min(h - 1, srcYB));
+
+                            let idxA = (srcYA * w + srcXA) * 4;
+                            let idxB = (srcYB * w + srcXB) * 4;
+                            let destIdx = (y * w + x) * 4;
+
+                            // 50/50 temporal blend 
+                            synthFrame.data[destIdx]   = (frameA.data[idxA]   + frameB.data[idxB])   >> 1;
+                            synthFrame.data[destIdx+1] = (frameA.data[idxA+1] + frameB.data[idxB+1]) >> 1;
+                            synthFrame.data[destIdx+2] = (frameA.data[idxA+2] + frameB.data[idxB+2]) >> 1;
+                            synthFrame.data[destIdx+3] = 255; 
+                        }
+                    }
+
+                    cachedTimeline.push(synthFrame);
+
+                    // Update progress bar scale (covers remaining 30% to 100% path)
+                    let interpolationPct = (i / (total - 2)) * 100;
+                    let totalPct = 30 + (interpolationPct * 0.7);
+                    progressBar.style.width = totalPct + '%';
+                    
+                    // Pass thread execution back to window context immediately to avoid tab crashes
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            function playSlowMoTimeline() {
+                let currentFrameIdx = 0;
+                const fps = parseFloat(pfpsInput.value) || 30;
+                const fpsInterval = 1000 / fps;
+                let then = performance.now();
+
+                function renderLoop(now) {
+                    if (cachedTimeline.length === 0) return;
+
+                    requestAnimationFrame(renderLoop);
+                    let elapsed = now - then;
+
+                    if (elapsed > fpsInterval) {
+                        then = now - (elapsed % fpsInterval);
+                        ctx.putImageData(cachedTimeline[currentFrameIdx], 0, 0);
+                        currentFrameIdx++;
+                        if (currentFrameIdx >= cachedTimeline.length) {
+                            currentFrameIdx = 0; 
+                        }
+                    }
+                }
+                requestAnimationFrame(renderLoop);
+            }
+        </script>
+    </body>
+</html>
